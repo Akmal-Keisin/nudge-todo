@@ -1,0 +1,26 @@
+# Taste
+- Runs Arch Linux with niri Wayland compositor + Noctalia shell (full desktop shell with bar, launcher, notifications, lock screen) and SDDM as display manager. Confidence: 0.9
+- Targets Xiaomi/POCO/Redmi Android devices running HyperOS/MIUI. Confidence: 0.9
+- Uses Flutter for cross-platform client apps (Android + Linux desktop). Confidence: 0.9
+- Uses Go for backend services. Confidence: 0.85
+- Prefers Riverpod for Flutter state management. Confidence: 0.85
+- Prefers feature-first folder structure with clean architecture layers (domain/data/application/presentation). Confidence: 0.9
+- Strict Dart style: `final` by default, `const` where possible, no `dynamic`, no `!` without justification, immutable models with `copyWith`, sealed classes and pattern matching. Confidence: 0.85
+- Expects `dart format`, `flutter analyze` (zero issues), and `flutter test` as verification gates after every change. Confidence: 0.9
+- Sideloads APKs on Android — no Play Store distribution, removing Play policy constraints. Confidence: 0.8
+- Prefers installing new skills globally (e.g., `npx skills add <skill> -g`) rather than per-project, so they're available across all sessions. Confidence: 0.65
+- Gives minimal prompts and expects the assistant to autonomously research, fix toolchain issues, and produce comprehensive planning docs before development begins. Confidence: 0.85
+- Creates detailed technical requirements documents with architectural and technical decisions pre-made — expects the assistant to honor those decisions. Confidence: 0.85
+- Uses AGENTS.md files to codify project rules and conventions for AI assistants. Confidence: 0.8
+- Prefers VPS hosting for backend services (over home server or tunnels). Confidence: 0.75
+- Prefers defensive/redundant engineering: asks for fallback mechanisms (e.g., AlarmManager fallback on Android in case HyperOS kills foreground service). Confidence: 0.8
+- Answers project questions concisely and wants to move to implementation immediately ("let's roll it up"). Confidence: 0.8
+- Prefers small vertical slices for development: each slice states the goal, acceptance criteria, files that may change, and how to verify. Confidence: 0.8
+- Prefers a monorepo: the backend service lives in a `server/` subdirectory of the same repo as the client app, sharing one git history so client and API stay in lockstep. Confidence: 0.7
+- Prefers layered backend architecture — handler → service → repository — with a repository interface as the storage boundary: business rules live in the service, and only the repository knows about SQL. Confidence: 0.75
+- Expects Go verification gates after every change: `gofmt`, `go vet ./...`, and `go test ./...` all clean (mirrors the Dart-side format/analyze/test discipline). Confidence: 0.8
+- Prefers the API contract to live with the code as a hand-written `openapi.yaml` that is the source of truth for clients. Confidence: 0.7
+- Prefers current/stable major versions for greenfield services over battle-tested legacy lines (e.g. Fiber v3 rather than v2). Confidence: 0.6
+- Prefers minimal-dependency, pure-Go tooling (no cgo — e.g. `modernc.org/sqlite` over a cgo driver) so builds stay simple and the Docker image is a static binary. Confidence: 0.6
+- Wants deployment/operations documentation as an explicit deliverable — step-by-step, self-contained runbooks (prerequisites, DNS, firewall, install, verification, day-2 ops like backups/upgrades/token rotation, troubleshooting, uninstall) rather than pointers to third-party docs. Confidence: 0.7
+- Wants a no-container deployment path available, not Docker-only: expects the service to be installable as a bare-metal systemd unit alongside the containerized option. Confidence: 0.6

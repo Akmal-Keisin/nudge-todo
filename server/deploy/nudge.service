@@ -1,0 +1,43 @@
+[Unit]
+Description=Nudge todo backend
+Documentation=https://github.com/akmalkeisin/nudge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nudge
+Group=nudge
+WorkingDirectory=/opt/nudge
+
+# Safe default: reachable only from this host, which is all a reverse proxy on
+# the same box needs. Listed before EnvironmentFile so the file can override it.
+Environment=BIND_HOST=127.0.0.1
+EnvironmentFile=/etc/nudge/nudge.env
+
+ExecStart=/opt/nudge/nudge
+Restart=on-failure
+RestartSec=5
+
+# The database lives here and is the only writable path.
+StateDirectory=nudge
+ReadWritePaths=/var/lib/nudge
+
+# Hardening: the service needs nothing but its own port and data directory.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+# Caddy reverse proxy for the Nudge API.
+#
+# NUDGE_DOMAIN and ACME_EMAIL are injected by docker-compose from .env.
+# Caddy fetches and renews the certificate automatically over ACME.
+{
+	email {$ACME_EMAIL}
+}
+
+{$NUDGE_DOMAIN} {
+	encode zstd gzip
+
+	# The clients are native apps, so there is no browser and no CORS layer
+	# is needed. Everything else is handled by the service itself.
+	reverse_proxy nudge:8080
+
+	log {
+		output stdout
+		format json
+	}
+}

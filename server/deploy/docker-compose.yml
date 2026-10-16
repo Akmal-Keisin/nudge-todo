@@ -1,0 +1,63 @@
+# Nudge backend + Caddy on a single host.
+#
+#   1. cp .env.example .env && edit it
+#   2. docker compose up -d --build
+#
+# Only Caddy publishes ports. The app is reachable as `nudge:8080` on the
+# compose network and never directly from outside.
+
+services:
+  nudge:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      API_TOKEN: ${API_TOKEN:?set API_TOKEN in .env}
+      PORT: 8080
+      DB_PATH: /data/nudge.db
+      ARCHIVE_RETENTION_DAYS: ${ARCHIVE_RETENTION_DAYS:-14}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+      IP_RATE_LIMIT_PER_MINUTE: ${IP_RATE_LIMIT_PER_MINUTE:-120}
+    volumes:
+      - nudge-data:/data
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      NUDGE_DOMAIN: ${NUDGE_DOMAIN:?set NUDGE_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      nudge:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  nudge-data:
+  caddy-data:
+  caddy-config:

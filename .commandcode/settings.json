@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(npx -y skills add wshobson/agents@mobile-android-design -g -y 2 >& 1)",
+      "Shell(flutter:*)",
+      "Shell(go:*)",
+      "Shell(flutter config --android-sdk 2>&1; cat ~/.flutter 2>/dev/null; cat ~/.config/flutter/settings 2>/dev/null; ls ~/Android/Sdk 2>/dev/null || echo \"No ~/Android/Sdk\")",
+      "Shell(grep:*)",
+      "Shell(FIBER=$(go env GOMODCACHE)/github.com/gofiber/fiber/v3@v3.6.1 echo \"=== Config fields (subset) ===\" grep -nE \"^\\s+(BodyLimit|ReadTimeout|WriteTimeout|IdleTimeout|ErrorHandler|StructValidator|CaseSensitive|StrictRouting|Immutable)\\b\" \"$FIBER/config.go\" | head -20 echo \"=== Ctx key methods ===\" grep -nE \"^\\s+func \\(c \\*DefaultCtx\\) (Params|Query|Body|JSON|Status|SendStatus|Locals|Context|Bind|Set|Get|Path)\\b\" \"$FIBER/ctx.go\" | head -30)",
+      "Shell(FIBER=$(go env GOMODCACHE)/github.com/gofiber/fiber/v3@v3.6.1 echo \"=== shutdown variants ===\" grep -nE \"^func \\(app \\*App\\) Shutdown\" \"$FIBER\"/*.go | head echo \"=== goose Logger iface + SetLogger ===\" GOOSE=$(go env GOMODCACHE)/github.com/pressly/goose/v3@v3.29.0 grep -nE \"^type Logger|^func SetLogger|Printf\\(format string|Fatalf\\(format string\" \"$GOOSE\"/logger.go 2>/dev/null | head)",
+      "Shell(GOOSE=$(go env GOMODCACHE)/github.com/pressly/goose/v3@v3.29.0 grep -rn \"SetLogger\\|type Logger\" \"$GOOSE\"/*.go | head -6 echo \"=== Logger definition ===\" grep -rn \"Printf(format string\" \"$GOOSE\"/*.go | head -4)",
+      "Shell(sed -n '1,50p' $(go env GOMODCACHE)/github.com/pressly/goose/v3@v3.29.0/log.go)",
+      "Shell(sed:*)",
+      "Shell(cd /home/akmalkeisin/Projects/private/nudge-todo/server SCRATCH=\"/tmp/commandcode/1000/-home-akmalkeisin-Projects-private-nudge-todo/0da44fd3-de1c-4f49-b626-fc97253d5011/scratchpad\" go build -o \"$SCRATCH/nudge-server\" ./cmd/nudge && echo \"built\" API_TOKEN=secret PORT=8099 DB_PATH=\"$SCRATCH/e2e.db\" \"$SCRATCH/nudge-server\" > \"$SCRATCH/server.log\" 2>&1 & sleep 3 cat \"$SCRATCH/server.log\")",
+      "Shell(B=http://127.0.0.1:8099 T=\"Authorization: Bearer secret\" J=\"Content-Type: application/json\" code() { curl -s -o /tmp/body.txt -w \"%{http_code}\" \"$@\"; } echo \"--- GET /health (no auth) -> $(code $B/health) $(cat /tmp/body.txt)\" echo \"--- GET /api/v1/todos (no auth) -> $(code $B/api/v1/todos) $(cat /tmp/body.txt)\" echo \"--- GET /api/v1/todos (bad token) -> $(code -H 'Authorization: Bearer nope' $B/api/v1/todos) $(cat /tmp/body.txt)\" echo \"\" echo \"--- POST create -> $(code -X POST -H \"$T\" -H \"$J\" -d '{\"id\":\"0b8f4c3e-5d1a-4c52-9a7e-2f6c1e8b9d10\",\"text\":\" Call the bank \"}' $B/api/v1/todos)\" cat /tmp/body.txt; echo echo \"--- POST same id again (idempotent)-> $(code -X POST -H \"$T\" -H \"$J\" -d '{\"id\":\"0b8f4c3e-5d1a-4c52-9a7e-2f6c1e8b9d10\",\"text\":\"Different\"}' $B/api/v1/todos)\" cat /tmp/body.txt; echo echo \"--- POST second todo -> $(code -X POST -H \"$T\" -H \"$J\" -d '{\"text\":\"Water plants\"}' $B/api/v1/todos)\" cat /tmp/body.txt; echo)",
+      "Shell(FIBER=$(go env GOMODCACHE)/github.com/gofiber/fiber/v3@v3.6.1 grep -nE \"DisableStartupMessage|EnablePrintRoutes\" \"$FIBER/app.go\" | head -4)",
+      "Shell(dart:*)",
+      "Shell(gofmt:*)",
+      "Shell(ss:*)",
+      "Shell(netstat:*)",
+      "Shell(echo:*)",
+      "Shell(head:*)",
+      "Shell(cd:*)",
+      "Shell(docker:*)",
+      "Shell(tail:*)",
+      "Shell(while:*)",
+      "Shell(do:*)",
+      "Shell(done:*)",
+      "Shell(systemd-analyze:*)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

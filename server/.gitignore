@@ -1,0 +1,11 @@
+# Local SQLite database and its WAL sidecars.
+*.db
+*.db-shm
+*.db-wal
+
+# Built binary.
+/nudge
+
+# Local env overrides.
+.env
+deploy/.env
