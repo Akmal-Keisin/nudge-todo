@@ -89,6 +89,7 @@ class AndroidNudgePlatform implements NudgePlatform {
     await _method.invokeMethod<void>('requestFullScreenIntentPermission');
   }
 
+  @override
   Future<void> dispose() async {
     await _sub?.cancel();
     await _controller.close();

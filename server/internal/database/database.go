@@ -5,6 +5,8 @@ import (
 	"embed"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite" // pure-Go driver, registers as "sqlite"
@@ -13,20 +15,36 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
+// poolSize caps the connection pool. WAL lets readers run while a writer holds
+// the write lock, so a handful of connections is safe; one would serialize
+// every read behind every write and behind the hourly prune.
+const poolSize = 4
+
 // Open connects to SQLite, applies the pragmas this workload wants, and runs
 // any pending migrations.
 func Open(path string, logger *slog.Logger) (*sql.DB, error) {
 	dsn := path + "?_pragma=busy_timeout(5000)" +
 		"&_pragma=journal_mode(WAL)" +
-		"&_pragma=foreign_keys(1)"
+		// NORMAL is the recommended WAL pairing: a commit no longer pays an
+		// fsync per write, which is the hot path here.
+		"&_pragma=synchronous(NORMAL)" +
+		"&_pragma=foreign_keys(1)" +
+		"&_pragma=temp_store(MEMORY)"
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	// SQLite handles one writer at a time; keeping the pool small avoids
-	// spurious SQLITE_BUSY under the prune job.
-	db.SetMaxOpenConns(1)
+	// An in-memory database is private to each connection, so a pool would hand
+	// every connection its own empty database. Tests use :memory:; pin it to a
+	// single connection and pool only the file-backed production database.
+	conns := poolSize
+	if isMemoryDB(path) {
+		conns = 1
+	}
+	db.SetMaxOpenConns(conns)
+	db.SetMaxIdleConns(conns)
+	db.SetConnMaxLifetime(time.Hour)
 
 	if err := db.Ping(); err != nil {
 		db.Close()
@@ -38,6 +56,12 @@ func Open(path string, logger *slog.Logger) (*sql.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+// isMemoryDB reports whether path refers to an in-memory database, which cannot
+// be shared across pooled connections.
+func isMemoryDB(path string) bool {
+	return strings.Contains(path, ":memory:") || strings.Contains(path, "mode=memory")
 }
 
 func migrate(db *sql.DB, logger *slog.Logger) error {

@@ -1,22 +1,23 @@
 # Deploying Nudge
 
 The backend is one small service — a static Go binary with a SQLite file — plus
-Caddy terminating TLS. Everything needed to run it on a single VPS lives in this
-directory.
+a reverse proxy terminating TLS. Everything needed to run it on a single VPS
+lives in this directory.
 
 ## Which guide?
 
 | | [docker.md](docker.md) | [bare-metal.md](bare-metal.md) |
 | --- | --- | --- |
 | Runtime | Docker + Compose | systemd + static binary |
-| Installed size | ~200 MB (engine + images) | ~15 MB |
+| Installed size | ~200 MB (engine + images) | ~15 MB app + nginx/Certbot |
 | Setup | Copy `.env`, one command | A dozen commands, more moving parts |
 | Upgrades | `docker compose up -d --build` | `scp` a binary, `systemctl restart` |
 | Isolation | Container | systemd sandboxing (already configured) |
 | Pick this if | You already run Docker, or want the least ceremony | You want the smallest footprint or dislike containers |
 
 Both end at the same place: the API on `https://your-domain/api/v1`, with only
-Caddy published to the internet.
+the reverse proxy published to the internet. Docker uses Caddy; the bare-metal
+path uses nginx with a Certbot-managed certificate.
 
 ## Files here
 
@@ -29,16 +30,16 @@ Caddy published to the internet.
 | `nudge.service` | Bare metal | systemd unit with sandboxing |
 | `.env.example` | Docker | Template for `.env` (copy it, do not commit it) |
 
-`bare-metal.md` embeds its Caddyfile and environment file inline, since on a host
-you edit those in place under `/etc`.
+`bare-metal.md` embeds its nginx site configuration and environment file inline,
+since on a host you edit those in place under `/etc`.
 
 ## Before either path
 
 1. **DNS first.** Point an `A` record at the box and confirm with
-   `dig +short nudge.example.com`. Caddy's ACME challenge fails until this
-   resolves, and that is the single most common way a first deployment stalls.
-2. **Firewall.** Allow SSH, 80 and 443. Never open 8080 — Caddy reaches the app
-   over an internal network (Docker) or loopback (bare metal).
+   `dig +short nudge.example.com`. The ACME challenge fails until this resolves,
+   and that is the single most common way a first deployment stalls.
+2. **Firewall.** Allow SSH, 80 and 443. Never open 8080 — the reverse proxy
+   reaches the app over an internal network (Docker) or loopback (bare metal).
 3. **Token.** `openssl rand -base64 32`. This is the only thing protecting your
    data; it goes in the server's config and in Settings on each device.
 

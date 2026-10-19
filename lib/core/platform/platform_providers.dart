@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -12,9 +14,13 @@ final targetPlatformProvider = Provider<TargetPlatform>(
 );
 
 final nudgePlatformProvider = Provider<NudgePlatform>((ref) {
-  return switch (ref.watch(targetPlatformProvider)) {
+  final platform = switch (ref.watch(targetPlatformProvider)) {
     TargetPlatform.android => AndroidNudgePlatform(),
     TargetPlatform.linux => LinuxNudgePlatform(),
     _ => NoopNudgePlatform(),
   };
+  // Tear down the stream controllers, D-Bus client and tray listener with the
+  // provider instead of leaking them for the process lifetime.
+  ref.onDispose(() => unawaited(platform.dispose()));
+  return platform;
 });

@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // clearEnv unsets every key Load reads, so a test never inherits the ambient
@@ -13,6 +14,7 @@ func clearEnv(t *testing.T) {
 		"API_TOKEN", "PORT", "BIND_HOST", "DB_PATH",
 		"ARCHIVE_RETENTION_DAYS", "RATE_LIMIT_PER_MINUTE",
 		"IP_RATE_LIMIT_PER_MINUTE", "BODY_LIMIT_BYTES",
+		"TRUSTED_PROXIES", "PRUNE_INTERVAL",
 	} {
 		t.Setenv(key, "")
 	}
@@ -56,6 +58,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	}
 	if cfg.BodyLimitBytes != 4096 {
 		t.Errorf("body limit: want 4096, got %d", cfg.BodyLimitBytes)
+	}
+	if cfg.PruneInterval != time.Hour {
+		t.Errorf("prune interval: want 1h, got %s", cfg.PruneInterval)
 	}
 }
 
@@ -133,5 +138,63 @@ func TestRetentionConvertsToDuration(t *testing.T) {
 	cfg := Config{ArchiveRetentionDays: 14}
 	if got := cfg.Retention().Hours(); got != 14*24 {
 		t.Fatalf("want 336h, got %gh", got)
+	}
+}
+
+func TestTrustedProxiesParseFromCommaSeparatedList(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("API_TOKEN", "secret")
+	t.Setenv("TRUSTED_PROXIES", "127.0.0.1, 10.0.0.0/8 ,")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	want := []string{"127.0.0.1", "10.0.0.0/8"}
+	if len(cfg.TrustedProxies) != len(want) {
+		t.Fatalf("want %v, got %v", want, cfg.TrustedProxies)
+	}
+	for i, w := range want {
+		if cfg.TrustedProxies[i] != w {
+			t.Errorf("entry %d: want %q, got %q", i, w, cfg.TrustedProxies[i])
+		}
+	}
+}
+
+func TestTrustedProxiesEmptyByDefault(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("API_TOKEN", "secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.TrustedProxies) != 0 {
+		t.Errorf("want no trusted proxies, got %v", cfg.TrustedProxies)
+	}
+}
+
+func TestPruneIntervalOverrideAndValidation(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("API_TOKEN", "secret")
+	t.Setenv("PRUNE_INTERVAL", "15m")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.PruneInterval != 15*time.Minute {
+		t.Errorf("want 15m, got %s", cfg.PruneInterval)
+	}
+
+	t.Setenv("PRUNE_INTERVAL", "not-a-duration")
+	if _, err := Load(); err == nil {
+		t.Fatal("want an error for a malformed PRUNE_INTERVAL")
+	}
+
+	t.Setenv("PRUNE_INTERVAL", "0s")
+	if _, err := Load(); err == nil {
+		t.Fatal("want an error for a non-positive PRUNE_INTERVAL")
 	}
 }

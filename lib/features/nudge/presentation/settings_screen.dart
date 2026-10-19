@@ -2,32 +2,75 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../app/layout/app_breakpoints.dart';
+import '../../../app/layout/pane_header.dart';
 import '../../../core/errors/app_failure.dart';
 import '../../../core/network/dio_provider.dart';
 import '../../../core/platform/android_nudge_platform.dart';
 import '../../../core/platform/platform_providers.dart';
+import '../../appearance/presentation/theme_picker.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../settings/domain/api_settings.dart';
+import '../../settings/presentation/settings_section.dart';
 import '../application/nudge_providers.dart';
 import '../domain/nudge_config.dart';
 
 class SettingsScreen extends ConsumerWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({this.embedded = false, super.key});
+
+  /// True when the expanded shell owns navigation and no AppBar is needed.
+  final bool embedded;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final configAsync = ref.watch(nudgeConfigProvider);
+    final body = configAsync.when(
+      data: (config) => _SettingsBody(config: config),
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (error, _) => Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              error is AppFailure ? error.message : 'Could not load settings.',
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () => ref.invalidate(nudgeConfigProvider),
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (embedded) {
+      return Center(
+        child: ConstrainedBox(
+          key: const ValueKey('settings-content'),
+          constraints: const BoxConstraints(
+            maxWidth: AppBreakpoints.settingsMaxWidth,
+          ),
+          child: Column(
+            children: [
+              const PaneHeader(
+                key: ValueKey('settings-pane-header'),
+                title: 'Settings',
+                subtitle: 'Nudge behavior, appearance and server',
+              ),
+              Expanded(child: body),
+            ],
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 720),
-          child: configAsync.when(
-            data: (config) => _SettingsBody(config: config),
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => Center(child: Text('Could not load settings: $e')),
-          ),
+          child: body,
         ),
       ),
     );
@@ -39,8 +82,17 @@ class _SettingsBody extends ConsumerWidget {
 
   final NudgeConfig config;
 
-  void _update(WidgetRef ref, NudgeConfig next) {
-    ref.read(nudgeConfigProvider.notifier).save(next);
+  /// Persists [next] and surfaces a storage failure, so a toggle that cannot be
+  /// saved does not silently look saved.
+  Future<void> _update(
+    BuildContext context,
+    WidgetRef ref,
+    NudgeConfig next,
+  ) async {
+    final failure = await ref.read(nudgeConfigProvider.notifier).save(next);
+    if (failure == null || !context.mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(failure.message)));
   }
 
   Future<void> _pickTime(
@@ -57,12 +109,21 @@ class _SettingsBody extends ConsumerWidget {
     );
     if (picked == null) return;
     final minutes = picked.hour * 60 + picked.minute;
-    _update(
-      ref,
-      isStart
-          ? config.copyWith(quietHoursStartMinutes: minutes)
-          : config.copyWith(quietHoursEndMinutes: minutes),
-    );
+    final next = isStart
+        ? config.copyWith(quietHoursStartMinutes: minutes)
+        : config.copyWith(quietHoursEndMinutes: minutes);
+
+    // An empty window (start == end) would make isWithinQuietHours ambiguous,
+    // so refuse it rather than saving something that does nothing.
+    if (next.quietHoursStartMinutes == next.quietHoursEndMinutes) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Start and end cannot be the same time.')),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    await _update(context, ref, next);
   }
 
   String _format(int minutes) {
@@ -75,109 +136,159 @@ class _SettingsBody extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final isAndroid =
         ref.watch(targetPlatformProvider) == TargetPlatform.android;
+    const appearance = ThemePickerSection();
+    final nudge = _nudgeSection(context, ref);
+    final privacy = _privacySection(context, ref);
+    const server = _ServerSection();
+    final android = isAndroid ? const _AndroidOnboardingSection() : null;
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final twoColumn =
+            constraints.maxWidth >= AppBreakpoints.settingsTwoColumnMinWidth;
+
+        if (!twoColumn) {
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [appearance, nudge, privacy, server, ?android],
+          );
+        }
+
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    key: const ValueKey('settings-left-column'),
+                    children: [appearance, nudge],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    key: const ValueKey('settings-right-column'),
+                    children: [privacy, server, ?android],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _nudgeSection(BuildContext context, WidgetRef ref) {
+    return SettingsSection(
+      title: 'Nudge',
       children: [
-        _Section(
-          title: 'Nudge',
-          children: [
-            SwitchListTile(
-              title: const Text('Show me my todos'),
-              subtitle: const Text('On boot, login and unlock'),
-              value: config.enabled,
-              onChanged: (v) => _update(ref, config.copyWith(enabled: v)),
-            ),
-            SwitchListTile(
-              title: const Text('Start at login / boot'),
-              value: config.startAtLogin,
-              onChanged: (v) => _update(ref, config.copyWith(startAtLogin: v)),
-            ),
-            ListTile(
-              title: const Text('Cooldown'),
-              subtitle: Slider(
-                value: config.cooldownMinutes.toDouble(),
-                min: NudgeConfig.minCooldownMinutes.toDouble(),
-                max: NudgeConfig.maxCooldownMinutes.toDouble(),
-                divisions:
-                    NudgeConfig.maxCooldownMinutes -
-                    NudgeConfig.minCooldownMinutes,
-                label: '${config.cooldownMinutes} min',
-                onChanged: (v) =>
-                    _update(ref, config.copyWith(cooldownMinutes: v.round())),
-              ),
-              trailing: Text('${config.cooldownMinutes} min'),
-            ),
-            SwitchListTile(
-              title: const Text('Quiet hours'),
-              subtitle: const Text('No nudges during this window'),
-              value: config.quietHoursEnabled,
-              onChanged: (v) =>
-                  _update(ref, config.copyWith(quietHoursEnabled: v)),
-            ),
-            if (config.quietHoursEnabled)
-              ListTile(
-                title: const Text('Quiet hours window'),
-                subtitle: Text(
-                  '${_format(config.quietHoursStartMinutes)} – '
-                  '${_format(config.quietHoursEndMinutes)}',
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextButton(
-                      onPressed: () => _pickTime(context, ref, isStart: true),
-                      child: const Text('Start'),
-                    ),
-                    TextButton(
-                      onPressed: () => _pickTime(context, ref, isStart: false),
-                      child: const Text('End'),
-                    ),
-                  ],
-                ),
-              ),
-          ],
+        SwitchListTile(
+          title: const Text('Show me my todos'),
+          subtitle: const Text('On boot, login and unlock'),
+          value: config.enabled,
+          onChanged: (v) => _update(context, ref, config.copyWith(enabled: v)),
         ),
-        _Section(
-          title: 'Privacy',
-          children: [
-            SwitchListTile(
-              title: const Text('Show todo text in notifications'),
-              subtitle: const Text('Off shows only the count'),
-              value: config.showTextInNotifications,
-              onChanged: (v) =>
-                  _update(ref, config.copyWith(showTextInNotifications: v)),
-            ),
-          ],
+        SwitchListTile(
+          title: const Text('Start at login / boot'),
+          value: config.startAtLogin,
+          onChanged: (v) =>
+              _update(context, ref, config.copyWith(startAtLogin: v)),
         ),
-        const _ServerSection(),
-        if (isAndroid) const _AndroidOnboardingSection(),
+        _CooldownSlider(config: config),
+        SwitchListTile(
+          title: const Text('Quiet hours'),
+          subtitle: const Text('No nudges during this window'),
+          value: config.quietHoursEnabled,
+          onChanged: (v) =>
+              _update(context, ref, config.copyWith(quietHoursEnabled: v)),
+        ),
+        if (config.quietHoursEnabled)
+          ListTile(
+            title: const Text('Quiet hours window'),
+            subtitle: Text(
+              '${_format(config.quietHoursStartMinutes)} – '
+              '${_format(config.quietHoursEndMinutes)}',
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextButton(
+                  onPressed: () => _pickTime(context, ref, isStart: true),
+                  child: const Text('Start'),
+                ),
+                TextButton(
+                  onPressed: () => _pickTime(context, ref, isStart: false),
+                  child: const Text('End'),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _privacySection(BuildContext context, WidgetRef ref) {
+    return SettingsSection(
+      title: 'Privacy',
+      children: [
+        SwitchListTile(
+          title: const Text('Show todo text in notifications'),
+          subtitle: const Text('Off shows only the count'),
+          value: config.showTextInNotifications,
+          onChanged: (v) => _update(
+            context,
+            ref,
+            config.copyWith(showTextInNotifications: v),
+          ),
+        ),
       ],
     );
   }
 }
 
-class _Section extends StatelessWidget {
-  const _Section({required this.title, required this.children});
+/// The cooldown slider holds the value under the finger locally and only
+/// persists on release, so a drag from 1 to 240 does not write to preferences
+/// (and the autostart entry) dozens of times.
+class _CooldownSlider extends ConsumerStatefulWidget {
+  const _CooldownSlider({required this.config});
 
-  final String title;
-  final List<Widget> children;
+  final NudgeConfig config;
+
+  @override
+  ConsumerState<_CooldownSlider> createState() => _CooldownSliderState();
+}
+
+class _CooldownSliderState extends ConsumerState<_CooldownSlider> {
+  double? _dragValue;
+
+  Future<void> _commit(double value) async {
+    setState(() => _dragValue = null);
+    final failure = await ref
+        .read(nudgeConfigProvider.notifier)
+        .save(widget.config.copyWith(cooldownMinutes: value.round()));
+    if (failure == null || !mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(failure.message)));
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-            child: Text(title, style: Theme.of(context).textTheme.titleMedium),
-          ),
-          ...children,
-          const SizedBox(height: 8),
-        ],
+    final value = _dragValue ?? widget.config.cooldownMinutes.toDouble();
+    return ListTile(
+      title: const Text('Cooldown'),
+      subtitle: Slider(
+        value: value,
+        min: NudgeConfig.minCooldownMinutes.toDouble(),
+        max: NudgeConfig.maxCooldownMinutes.toDouble(),
+        divisions:
+            NudgeConfig.maxCooldownMinutes - NudgeConfig.minCooldownMinutes,
+        onChanged: (v) => setState(() => _dragValue = v),
+        onChangeEnd: _commit,
       ),
+      trailing: Text('${value.round()} min'),
     );
   }
 }
@@ -215,7 +326,7 @@ class _AndroidOnboardingSectionState
   Widget build(BuildContext context) {
     final showHyperOsSteps = _isHyperOs ?? false;
 
-    return _Section(
+    return SettingsSection(
       title: 'Android permissions',
       children: [
         ListTile(
@@ -274,6 +385,7 @@ class _ServerSectionState extends ConsumerState<_ServerSection> {
   bool _revealToken = false;
   bool _loaded = false;
   bool _testing = false;
+  bool _saving = false;
   String? _status;
   bool _statusIsError = false;
 
@@ -302,18 +414,32 @@ class _ServerSectionState extends ConsumerState<_ServerSection> {
   }
 
   Future<void> _save() async {
-    await ref
-        .read(apiSettingsProvider.notifier)
-        .save(
-          ApiSettings(
-            baseUrl: _urlController.text.trim(),
-            token: _tokenController.text.trim(),
-          ),
-        );
+    final settings = ApiSettings(
+      baseUrl: _urlController.text.trim(),
+      token: _tokenController.text.trim(),
+    );
+
+    final validationError = settings.validationError;
+    if (validationError != null) {
+      setState(() {
+        _status = validationError;
+        _statusIsError = true;
+      });
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+      _status = null;
+    });
+
+    final failure = await ref.read(apiSettingsProvider.notifier).save(settings);
+
     if (!mounted) return;
     setState(() {
-      _status = 'Saved.';
-      _statusIsError = false;
+      _saving = false;
+      _status = failure == null ? 'Saved.' : failure.message;
+      _statusIsError = failure != null;
     });
   }
 
@@ -375,8 +501,9 @@ class _ServerSectionState extends ConsumerState<_ServerSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final busy = _testing || _saving;
 
-    return _Section(
+    return SettingsSection(
       title: 'Server',
       children: [
         const Padding(
@@ -389,12 +516,14 @@ class _ServerSectionState extends ConsumerState<_ServerSection> {
             controller: _urlController,
             keyboardType: TextInputType.url,
             autocorrect: false,
+            textInputAction: TextInputAction.next,
             decoration: const InputDecoration(
               labelText: 'Server URL',
               hintText: 'https://nudge.example.com',
               border: OutlineInputBorder(),
               isDense: true,
             ),
+            onSubmitted: (_) => _save(),
           ),
         ),
         Padding(
@@ -404,6 +533,7 @@ class _ServerSectionState extends ConsumerState<_ServerSection> {
             obscureText: !_revealToken,
             autocorrect: false,
             enableSuggestions: false,
+            textInputAction: TextInputAction.done,
             decoration: InputDecoration(
               labelText: 'API token',
               border: const OutlineInputBorder(),
@@ -416,6 +546,7 @@ class _ServerSectionState extends ConsumerState<_ServerSection> {
                 onPressed: () => setState(() => _revealToken = !_revealToken),
               ),
             ),
+            onSubmitted: (_) => _save(),
           ),
         ),
         if (_status != null)
@@ -435,11 +566,14 @@ class _ServerSectionState extends ConsumerState<_ServerSection> {
           child: Row(
             children: [
               FilledButton(
-                onPressed: _testing ? null : _test,
+                onPressed: busy ? null : _test,
                 child: Text(_testing ? 'Testing...' : 'Test connection'),
               ),
               const SizedBox(width: 12),
-              OutlinedButton(onPressed: _save, child: const Text('Save')),
+              OutlinedButton(
+                onPressed: busy ? null : _save,
+                child: Text(_saving ? 'Saving...' : 'Save'),
+              ),
             ],
           ),
         ),

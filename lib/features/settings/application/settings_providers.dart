@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/errors/app_failure.dart';
 import '../../../core/storage/storage_providers.dart';
 import '../data/api_settings_repository.dart';
 import '../data/token_store.dart';
@@ -21,9 +22,18 @@ class ApiSettingsController extends AsyncNotifier<ApiSettings> {
     return ref.watch(apiSettingsRepositoryProvider).load();
   }
 
-  Future<void> save(ApiSettings settings) async {
+  /// Applies [settings] optimistically, reverting on a storage failure and
+  /// returning it so the caller can show a message.
+  Future<AppFailure?> save(ApiSettings settings) async {
+    final previous = state.value;
     state = AsyncData(settings);
-    await ref.read(apiSettingsRepositoryProvider).save(settings);
+    try {
+      await ref.read(apiSettingsRepositoryProvider).save(settings);
+      return null;
+    } catch (_) {
+      if (previous != null) state = AsyncData(previous);
+      return const StorageFailure();
+    }
   }
 }
 

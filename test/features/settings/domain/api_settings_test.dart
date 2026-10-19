@@ -41,4 +41,34 @@ void main() {
     expect(original.copyWith(token: 'xyz').token, 'xyz');
     expect(original.copyWith(token: 'xyz').baseUrl, 'https://a.test');
   });
+
+  test('validationError accepts local-only and a full URL with a token', () {
+    expect(const ApiSettings().validationError, isNull);
+    expect(
+      const ApiSettings(
+        baseUrl: 'https://nudge.example.com',
+        token: 'secret',
+      ).validationError,
+      isNull,
+    );
+  });
+
+  test('validationError rejects a malformed or schemeless URL', () {
+    expect(
+      const ApiSettings(baseUrl: 'nudge.example.com').validationError,
+      isNotNull,
+    );
+    expect(
+      const ApiSettings(baseUrl: 'ftp://a.test').validationError,
+      isNotNull,
+    );
+    expect(const ApiSettings(baseUrl: 'https://').validationError, isNotNull);
+  });
+
+  test('validationError requires a token once a URL is set', () {
+    expect(
+      const ApiSettings(baseUrl: 'https://nudge.example.com').validationError,
+      isNotNull,
+    );
+  });
 }

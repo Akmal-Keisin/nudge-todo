@@ -14,8 +14,14 @@ class ApiSettingsRepository {
   static const _urlKey = 'nudge_api_base_url';
 
   Future<ApiSettings> load() async {
-    final url = await _prefs.getString(_urlKey) ?? '';
-    final token = await _tokens.read() ?? '';
+    // The secure-storage read can be slow (keyring/libsecret), so run it
+    // alongside the preferences read rather than after it.
+    final results = await Future.wait([
+      _prefs.getString(_urlKey),
+      _tokens.read(),
+    ]);
+    final url = results[0] ?? '';
+    final token = results[1] ?? '';
     return ApiSettings(baseUrl: url, token: token);
   }
 

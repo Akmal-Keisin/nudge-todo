@@ -8,8 +8,8 @@ Future<void> setUpDesktopWindow() async {
   try {
     await windowManager.ensureInitialized();
     const options = WindowOptions(
-      size: Size(560, 760),
-      minimumSize: Size(360, 480),
+      size: Size(1080, 720),
+      minimumSize: Size(420, 520),
       center: true,
       title: 'Nudge',
     );

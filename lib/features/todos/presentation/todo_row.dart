@@ -31,12 +31,14 @@ class TodoRow extends StatefulWidget {
 
 class _TodoRowState extends State<TodoRow> {
   late final TextEditingController _editController;
+  late final FocusNode _editFocus;
   bool _isEditing = false;
 
   @override
   void initState() {
     super.initState();
     _editController = TextEditingController(text: widget.todo.text);
+    _editFocus = FocusNode();
   }
 
   @override
@@ -51,6 +53,7 @@ class _TodoRowState extends State<TodoRow> {
   @override
   void dispose() {
     _editController.dispose();
+    _editFocus.dispose();
     super.dispose();
   }
 
@@ -80,10 +83,15 @@ class _TodoRowState extends State<TodoRow> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+    final row = Card(
+      color: widget.isExpanded
+          ? theme.colorScheme.primaryContainer.withValues(alpha: 0.22)
+          : null,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
+        hoverColor: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: 0.6,
+        ),
         onTap: widget.onToggleExpand,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -122,18 +130,16 @@ class _TodoRowState extends State<TodoRow> {
         ),
       ),
     );
+
+    return MouseRegion(cursor: SystemMouseCursors.click, child: row);
   }
 
   Widget _buildEditor(ThemeData theme) {
-    return KeyboardListener(
-      focusNode: FocusNode(),
-      onKeyEvent: (event) {
-        if (event.logicalKey == LogicalKeyboardKey.escape) {
-          _cancelEdit();
-        }
-      },
+    return CallbackShortcuts(
+      bindings: {const SingleActivator(LogicalKeyboardKey.escape): _cancelEdit},
       child: TextField(
         controller: _editController,
+        focusNode: _editFocus,
         autofocus: true,
         maxLines: null,
         onSubmitted: (_) => _saveEdit(),

@@ -1,9 +1,9 @@
 # Deploying Nudge without Docker
 
-A single static Go binary under systemd, with Caddy terminating TLS on the same
-host. No container runtime, no orchestrator — about 15 MB of software.
+A single static Go binary under systemd, with nginx terminating TLS on the same
+host. No container runtime, no orchestrator.
 
-For the container route see [docker.md](docker.md).
+For the container route — which uses Caddy — see [docker.md](docker.md).
 
 ---
 
@@ -14,18 +14,19 @@ For the container route see [docker.md](docker.md).
 | VPS | 1 vCPU / 512 MB RAM is enough. |
 | Domain | e.g. `nudge.example.com`, with an A record you can edit. |
 | SSH access | `ssh you@203.0.113.10` |
-| Go 1.27+ | Only on the machine you *build* on — not necessarily the server. |
+| Go 1.27.2+ | Only on the machine you *build* on — not necessarily the server. |
 
 The binary is built with `CGO_ENABLED=0` (the SQLite driver is pure Go), so it
 is statically linked and runs on any glibc or musl x86_64 Linux without
-dependencies.
+dependencies. nginx and Certbot come from the distribution packages; there is
+nothing else to install.
 
 ---
 
 ## 1. Point DNS at the box, first
 
-Caddy proves domain ownership with an ACME challenge on port 80. If the name does
-not resolve here yet, certificate issuance fails.
+Certbot proves domain ownership with an HTTP-01 challenge on port 80. If the
+name does not resolve here yet, certificate issuance fails.
 
 ```
 Type   Name     Value
@@ -55,9 +56,12 @@ sudo ufw status
 ```
 
 Port 8080 is deliberately **not** opened. The service will bind to loopback
-only, so Caddy is the only thing that can reach it — even if this firewall were
+only, so nginx is the only thing that can reach it — even if this firewall were
 misconfigured, the API would not be exposed directly (which would also mean no
 TLS, and the token travelling in cleartext).
+
+Port 80 must stay open after issuance: Certbot renews the certificate with the
+same HTTP-01 challenge.
 
 If your provider has its own cloud firewall, open 80 and 443 there too.
 
@@ -120,11 +124,12 @@ sudo install -d -o nudge -g nudge -m 0750 /var/lib/nudge
 
 ```bash
 sudo install -o root -g root -m 0755 /tmp/nudge /opt/nudge/nudge
-/opt/nudge/nudge --help 2>&1 | head -2 || true    # exists and is executable
+test -x /opt/nudge/nudge && echo "binary installed"
 ```
 
 The binary itself is owned by root and not writable by the service, so a
-compromised process cannot replace its own executable.
+compromised process cannot replace its own executable. It takes no command-line
+flags; all configuration comes from the environment file below.
 
 ---
 
@@ -146,6 +151,11 @@ API_TOKEN=<paste the generated token>
 DB_PATH=/var/lib/nudge/nudge.db
 
 PORT=8080
+
+# nginx is the only client. Trusting its loopback address makes the app use
+# X-Forwarded-For for the client IP, so the per-IP rate limit and the access log
+# see the real device instead of 127.0.0.1 for every request.
+TRUSTED_PROXIES=127.0.0.1
 
 # Optional.
 ARCHIVE_RETENTION_DAYS=14
@@ -187,7 +197,7 @@ ss -lntp | grep 8080
 
 If it shows `0.0.0.0:8080`, `BIND_HOST` did not take effect.
 
-Sanity check locally, before Caddy is involved:
+Sanity check locally, before nginx is involved:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/health   # 200
@@ -195,73 +205,165 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/health   # 200
 
 ---
 
-## 8. Install Caddy
+## 8. Install nginx and Certbot
 
 ```bash
-sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
-
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-  | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
-  | sudo tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
-
 sudo apt update
-sudo apt install -y caddy
-caddy version
+sudo apt install -y nginx certbot
+nginx -v
+certbot --version
 ```
+
+The distribution packages are enough; no third-party repository is needed.
 
 ---
 
-## 9. Configure Caddy
+## 9. Configure nginx and issue the certificate
 
-Replace `/etc/caddy/Caddyfile` with the following, editing the domain:
+nginx starts on HTTP only, so Certbot can answer the challenge from the webroot.
+Once the certificate exists, the same file gains the HTTPS server block.
 
-```caddyfile
-nudge.example.com {
-	encode zstd gzip
-	reverse_proxy 127.0.0.1:8080
+Create the webroot and `/etc/nginx/sites-available/nudge`:
 
-	log {
-		output file /var/log/caddy/nudge.log
-		format json
-	}
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name nudge.example.com;
+
+    # Certbot writes the HTTP-01 challenge here. This must stay reachable on
+    # port 80 for renewals too.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
 }
 ```
 
-Caddy's package ships a `caddy` user. For the file log to work, that user needs
-the directory:
+Enable it, replacing the stock default site:
 
 ```bash
-sudo install -d -o caddy -g caddy -m 0755 /var/log/caddy
+sudo install -d -o root -g root -m 0755 /var/www/certbot
+sudo ln -sf /etc/nginx/sites-available/nudge /etc/nginx/sites-enabled/nudge
+sudo rm -f /etc/nginx/sites-enabled/default
+
+sudo nginx -t
+sudo systemctl reload nginx
+sudo systemctl status nginx --no-pager
+```
+
+Issue the certificate:
+
+```bash
+sudo certbot certonly --webroot -w /var/www/certbot \
+  -d nudge.example.com \
+  --email you@example.com --agree-tos --no-eff-email
+```
+
+Certbot prints `Successfully received certificate` and writes
+`/etc/letsencrypt/live/nudge.example.com/`. Confirm:
+
+```bash
+sudo certbot certificates
+```
+
+Now replace `/etc/nginx/sites-available/nudge` with the full configuration:
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name nudge.example.com;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name nudge.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/nudge.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/nudge.example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    # Match the app's BODY_LIMIT_BYTES (4096 is the default). Change both if the
+    # limit ever moves.
+    client_max_body_size 4k;
+
+    # The clients are native apps, so there is no browser and no CORS layer is
+    # needed. There are no websockets either.
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+
+        # Overwrite, rather than append to, any client-supplied header: a
+        # device must not be able to dodge the per-IP rate limit by sending a
+        # forged X-Forwarded-For.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 15s;
+    }
+}
 ```
 
 Validate, then load it:
 
 ```bash
-sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl reload caddy
-sudo systemctl status caddy --no-pager
+sudo nginx -t
+sudo systemctl reload nginx
+sudo systemctl status nginx --no-pager
 ```
 
-The Caddy unit is `After=` nothing in particular, so if it starts before `nudge`
-it may briefly return `502`. That resolves on its own; add
-`After=nudge.service` to `/etc/systemd/system/caddy.service.d/override.conf` if
-you want it ordered strictly.
+The certificate is valid for 90 days. Ubuntu's Certbot package installs
+`certbot.timer`, which checks twice a day and renews within 30 days of expiry.
+Because the webroot authenticator does not touch nginx, reload it after a
+renewal with a deploy hook:
+
+```bash
+sudo install -d -o root -g root -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+sudo tee /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh >/dev/null <<'EOF'
+#!/bin/sh
+systemctl reload nginx
+EOF
+sudo chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+
+sudo certbot renew --dry-run
+systemctl list-timers 'certbot*'
+```
+
+nginx starts independently of `nudge`, so after a reboot it may briefly return
+`502` until the app is up. That resolves on its own; to order them strictly, add
+a drop-in with `sudo systemctl edit nginx`:
+
+```ini
+[Unit]
+After=nudge.service
+```
 
 Watch the certificate being issued:
 
 ```bash
-sudo journalctl -u caddy -f
+sudo journalctl -u certbot -f
 ```
-
-You want `certificate obtained successfully` and `serving initial configuration`.
 
 ---
 
 ## 10. Verify
 
-From your **laptop** — this also proves DNS and the firewall:
+From your **laptop** — this also proves DNS, the firewall and nginx:
 
 ```bash
 BASE=https://nudge.example.com
@@ -285,7 +387,8 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 Also confirm the certificate is real, not self-signed:
 
 ```bash
-echo | openssl s_client -connect nudge.example.com:443 2>/dev/null \
+echo | openssl s_client -connect nudge.example.com:443 \
+  -servername nudge.example.com 2>/dev/null \
   | openssl x509 -noout -issuer -dates
 # issuer=C=US, O=Let's Encrypt, ...
 ```
@@ -311,11 +414,13 @@ On each device:
 ```bash
 sudo journalctl -u nudge -f            # structured JSON, one line per event
 sudo journalctl -u nudge --since today
-sudo journalctl -u caddy -f            # TLS, ACME renewals, access log
-tail -f /var/log/caddy/nudge.log
+sudo journalctl -u nginx -f
+sudo tail -f /var/log/nginx/access.log /var/log/nginx/error.log
+sudo journalctl -u certbot --since today   # ACME renewals
 ```
 
-To keep the journal from growing without bound:
+The nginx package ships `/etc/logrotate.d/nginx`, so its access and error logs
+rotate on their own. To keep the journal from growing without bound:
 
 ```bash
 sudo sed -i 's/^#SystemMaxUse=.*/SystemMaxUse=200M/' /etc/systemd/journald.conf
@@ -403,13 +508,18 @@ get `401` and the app shows *"Token rejected."*
 
 ### Checking the certificate
 
-Caddy renews automatically, 30 days before expiry.
-
 ```bash
-echo | openssl s_client -connect nudge.example.com:443 2>/dev/null \
+echo | openssl s_client -connect nudge.example.com:443 \
+  -servername nudge.example.com 2>/dev/null \
   | openssl x509 -noout -dates
-sudo journalctl -u caddy | grep -i renew | tail
+
+sudo certbot certificates
+sudo certbot renew --dry-run
+sudo journalctl -u certbot | grep -i renew | tail
 ```
+
+Certbot's timer runs twice a day and renews 30 days before expiry; the deploy
+hook reloads nginx so the new certificate is actually served.
 
 ---
 
@@ -451,9 +561,12 @@ sudo systemd-analyze security nudge.service
 | `status=200/CHDIR` | `/opt/nudge` missing — redo step 4. |
 | Service fails with `Read-only file system` | `DB_PATH` is not under `/var/lib/nudge`. Move it or extend `ReadWritePaths`. |
 | `ss -lntp` shows `0.0.0.0:8080` | `BIND_HOST` overridden in `nudge.env`; remove it. |
-| Caddy logs ACME failures | DNS not pointed here, or port 80 blocked. `dig +short`, `ufw status`. |
-| `502 Bad Gateway` from Caddy | The app is down. `systemctl status nudge`, `journalctl -u nudge`. |
-| `502` for a few seconds after boot | Caddy started before the app. Harmless; see step 9 for strict ordering. |
+| Certbot fails the challenge | DNS not pointed here, port 80 blocked, or `/.well-known/acme-challenge/` not routed. `dig +short`, `ufw status`, then `sudo certbot renew --dry-run`. |
+| `nginx: [emerg] cannot load certificate` | The certificate has not been issued yet, or the domain in the path differs. `sudo certbot certificates`. |
+| `502 Bad Gateway` from nginx | The app is down. `systemctl status nudge`, `journalctl -u nudge`, then `tail /var/log/nginx/error.log`. |
+| `502` for a few seconds after boot | nginx started before the app. Harmless; see step 9 for strict ordering. |
+| Every request rate-limited as one client; nginx logs show `127.0.0.1` | `TRUSTED_PROXIES` is missing from `nudge.env`, so `X-Forwarded-For` is ignored. Add `TRUSTED_PROXIES=127.0.0.1` and restart. |
+| `413 Request Entity Too Large` from nginx | The body exceeds `client_max_body_size`; it should match `BODY_LIMIT_BYTES` (4096 by default). |
 | App says *"Token rejected"* | Token mismatch between `nudge.env` and Settings. |
 | App says *"Could not reach the server"* | Wrong URL, missing `https://`, or the device's network blocks it. |
 | `curl` from outside times out | Cloud firewall still closed on 443. |
@@ -466,7 +579,9 @@ Useful:
 sudo systemctl status nudge --no-pager
 sudo journalctl -u nudge -n 100 --no-pager
 sudo journalctl -u nudge -p err --since '1 hour ago'
-sudo ss -lntp | grep -E '8080|443'
+sudo nginx -t
+sudo systemctl status nginx --no-pager
+sudo ss -lntp | grep -E '8080|80|443'
 sudo -u nudge sqlite3 /var/lib/nudge/nudge.db '.tables'
 sudo -u nudge sqlite3 /var/lib/nudge/nudge.db 'select count(*) from todos;'
 ```
@@ -484,9 +599,13 @@ sudo rm -rf /opt/nudge /etc/nudge
 # This deletes your todos. Back up first if there is any doubt.
 sudo rm -rf /var/lib/nudge
 
-sudo systemctl disable --now caddy
-sudo apt remove -y caddy
-sudo rm -rf /var/log/caddy /var/lib/caddy /etc/caddy
+sudo rm -f /etc/nginx/sites-enabled/nudge /etc/nginx/sites-available/nudge
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot delete --cert-name nudge.example.com --non-interactive
+sudo rm -rf /var/www/certbot
+sudo systemctl disable --now nginx
+sudo apt remove -y nginx certbot
+sudo apt autoremove -y
 
 sudo userdel nudge
 sudo ufw delete allow 80/tcp

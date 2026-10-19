@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/errors/app_failure.dart';
 import '../../../core/platform/nudge_platform.dart';
 import '../../../core/platform/platform_providers.dart';
 import '../../../core/storage/storage_providers.dart';
@@ -21,10 +22,25 @@ class NudgeConfigController extends AsyncNotifier<NudgeConfig> {
     return ref.watch(nudgeSettingsRepositoryProvider).load();
   }
 
-  Future<void> save(NudgeConfig config) async {
+  /// Applies [config] optimistically, reverting on a storage failure and
+  /// returning it so the caller can show a message. The autostart entry is only
+  /// rewritten when the flag actually changed, so toggling quiet hours or
+  /// dragging the cooldown no longer touches it.
+  Future<AppFailure?> save(NudgeConfig config) async {
+    final previous = state.value;
     state = AsyncData(config);
-    await ref.read(nudgeSettingsRepositoryProvider).save(config);
-    await ref.read(nudgePlatformProvider).setStartAtLogin(config.startAtLogin);
+    try {
+      await ref.read(nudgeSettingsRepositoryProvider).save(config);
+    } catch (_) {
+      if (previous != null) state = AsyncData(previous);
+      return const StorageFailure();
+    }
+    if (previous != null && previous.startAtLogin != config.startAtLogin) {
+      await ref
+          .read(nudgePlatformProvider)
+          .setStartAtLogin(config.startAtLogin);
+    }
+    return null;
   }
 }
 

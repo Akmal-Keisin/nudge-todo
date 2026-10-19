@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 enum NudgeTrigger { boot, login, unlock, screenOn, resume, manual }
 
 class NudgeSnapshot {
@@ -21,6 +23,25 @@ class NudgeSnapshot {
   final bool enabled;
   final int cooldownMinutes;
   final bool showTextInNotifications;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is NudgeSnapshot &&
+          pendingCount == other.pendingCount &&
+          enabled == other.enabled &&
+          cooldownMinutes == other.cooldownMinutes &&
+          showTextInNotifications == other.showTextInNotifications &&
+          listEquals(titles, other.titles);
+
+  @override
+  int get hashCode => Object.hash(
+    pendingCount,
+    enabled,
+    cooldownMinutes,
+    showTextInNotifications,
+    Object.hashAll(titles),
+  );
 }
 
 abstract class NudgePlatform {
@@ -41,4 +62,8 @@ abstract class NudgePlatform {
   Stream<NudgeTrigger> get triggers;
 
   Future<void> dismiss();
+
+  /// Releases native resources (stream controllers, D-Bus client, tray
+  /// listener). Called when the platform provider is disposed.
+  Future<void> dispose();
 }

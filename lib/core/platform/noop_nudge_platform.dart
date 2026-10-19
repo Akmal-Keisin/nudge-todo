@@ -22,4 +22,7 @@ class NoopNudgePlatform implements NudgePlatform {
 
   @override
   Future<void> dismiss() async {}
+
+  @override
+  Future<void> dispose() => _controller.close();
 }

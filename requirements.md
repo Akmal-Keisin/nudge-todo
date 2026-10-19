@@ -69,9 +69,12 @@ Ship Tier 1 first as the baseline. Tier 2 is the goal.
 
 ### Layout
 
-- One main screen. Top bar: title with pending count, an Active | Archive switch, and an overflow menu (Refresh, Settings).
+- One main screen. Top bar: title with pending count, an Active | Archive switch, and Refresh / Settings actions.
 - Body: the list. The Active tab has a composer pinned to the bottom (text field plus add button).
-- On wide screens (desktop, tablet landscape) content is centered with a max width of about 720 px.
+- **Compact (`< 600 px`):** AppBar with bottom tabs, full-bleed composer, Settings pushed as a second screen.
+- **Medium (`600–839 px`):** in-content header with filter segments, 760 px content cap, floating composer.
+- **Expanded (`>= 840 px`):** persistent `NavigationRail` with Active / Archive / Settings and a pending-count badge; 760 px content pane. At `>= 1200 px` the rail shows labels.
+- Settings is capped at 1000 px in the expanded pane and uses two columns when its body is at least 900 px wide.
 - Material 3, following system light/dark.
 
 ### Row behavior: seeing the full text without a detail page
@@ -100,7 +103,7 @@ Each todo is one row, and the row itself is the detail view.
 
 ### Desktop and accessibility
 
-- Shortcuts: Ctrl+N focuses the composer, Enter submits, Esc cancels or collapses, Ctrl+R refreshes.
+- Shortcuts: Ctrl+N focuses the composer, Enter submits, Esc cancels or collapses, Ctrl+R refreshes, Ctrl+1 / Ctrl+2 switch Active/Archive, Ctrl+, opens Settings.
 - 48 dp minimum touch targets, semantic labels, large-text support, full keyboard navigation.
 
 ## 4. Development plan

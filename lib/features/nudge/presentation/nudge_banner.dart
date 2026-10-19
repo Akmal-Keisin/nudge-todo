@@ -17,29 +17,48 @@ class NudgeBanner extends ConsumerWidget {
     final pending = todos.where((t) => !t.isArchived).length;
 
     final theme = Theme.of(context);
-    return Material(
-      color: theme.colorScheme.primaryContainer,
-      child: Padding(
+    final scheme = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: Container(
         padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [scheme.primaryContainer, scheme.tertiaryContainer],
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+        ),
         child: Row(
           children: [
-            Icon(
-              Icons.notifications_active,
-              color: theme.colorScheme.onPrimaryContainer,
+            CircleAvatar(
+              radius: 18,
+              backgroundColor: scheme.onPrimaryContainer.withValues(
+                alpha: 0.12,
+              ),
+              child: Icon(
+                Icons.notifications_active,
+                size: 20,
+                color: scheme.onPrimaryContainer,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 'You have $pending ${pending == 1 ? 'thing' : 'things'} to do',
                 style: theme.textTheme.titleMedium?.copyWith(
-                  color: theme.colorScheme.onPrimaryContainer,
+                  color: scheme.onPrimaryContainer,
                 ),
               ),
             ),
             TextButton(
-              onPressed: () {
+              style: TextButton.styleFrom(
+                foregroundColor: scheme.onPrimaryContainer,
+              ),
+              onPressed: () async {
                 ref.read(nudgeBannerProvider.notifier).hide();
-                ref.read(nudgePlatformProvider).dismiss();
+                await ref.read(nudgePlatformProvider).dismiss();
               },
               child: const Text('Got it'),
             ),

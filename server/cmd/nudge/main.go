@@ -42,7 +42,7 @@ func run(logger *slog.Logger) error {
 	defer db.Close()
 
 	service := todo.NewService(todo.NewSQLiteRepository(db), cfg.Retention())
-	app := server.New(cfg, service)
+	app := server.New(cfg, service, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -85,8 +85,15 @@ func run(logger *slog.Logger) error {
 	return nil
 }
 
+// pruneTimeout bounds a single retention run so a stuck delete cannot hold a
+// connection indefinitely.
+const pruneTimeout = 30 * time.Second
+
 func prune(ctx context.Context, service *todo.Service, logger *slog.Logger) {
-	removed, err := service.Prune(ctx)
+	pruneCtx, cancel := context.WithTimeout(ctx, pruneTimeout)
+	defer cancel()
+
+	removed, err := service.Prune(pruneCtx)
 	if err != nil {
 		logger.Error("prune", slog.String("error", err.Error()))
 		return

@@ -13,44 +13,53 @@ class LocalTodoRepository implements TodoRepository {
   final SharedPreferencesAsync _prefs;
   static const _key = 'nudge_todos';
 
-  Future<Map<String, Todo>> _loadAll() async {
+  /// Decoded once and kept in memory. Every method works on this map, so a
+  /// write no longer re-decodes the whole list just to add one item.
+  Map<String, Todo>? _cache;
+
+  Future<Map<String, Todo>> _load() async {
+    final cached = _cache;
+    if (cached != null) return cached;
+
     final json = await _prefs.getString(_key);
-    if (json == null) return {};
+    if (json == null) return _cache = <String, Todo>{};
     final list = jsonDecode(json) as List<dynamic>;
-    return {
+    return _cache = {
       for (final item in list)
         (item as Map<String, dynamic>)['id'] as String: Todo.fromJson(item),
     };
   }
 
-  Future<void> _saveAll(Map<String, Todo> todos) async {
+  Future<void> _persist() async {
+    final todos = _cache ?? const <String, Todo>{};
     final json = jsonEncode(todos.values.map((t) => t.toJson()).toList());
     await _prefs.setString(_key, json);
   }
 
   @override
   Future<List<Todo>> getTodos({TodoFilter filter = TodoFilter.all}) async {
-    final todos = await _loadAll();
+    final todos = await _load();
     return applyFilterAndSort(todos.values, filter);
   }
 
   @override
   Future<Todo> createTodo(String text, {String? id}) async {
-    final todos = await _loadAll();
+    final todos = await _load();
     final todo = Todo(id: id, text: text.trim());
     todos[todo.id] = todo;
-    await _saveAll(todos);
+    await _persist();
     return todo;
   }
 
   /// Replaces the whole cache. Used when a remote read gives the full list.
   Future<void> replaceAll(List<Todo> todos) async {
-    await _saveAll({for (final todo in todos) todo.id: todo});
+    _cache = {for (final todo in todos) todo.id: todo};
+    await _persist();
   }
 
   @override
   Future<Todo> updateTodo(String id, {String? text, bool? isArchived}) async {
-    final todos = await _loadAll();
+    final todos = await _load();
     final existing = todos[id];
     if (existing == null) {
       throw const NotFoundFailure();
@@ -63,20 +72,21 @@ class LocalTodoRepository implements TodoRepository {
       updated = isArchived ? updated.archive() : updated.restore();
     }
     todos[id] = updated;
-    await _saveAll(todos);
+    await _persist();
     return updated;
   }
 
   @override
   Future<void> deleteTodo(String id) async {
-    final todos = await _loadAll();
+    final todos = await _load();
     todos.remove(id);
-    await _saveAll(todos);
+    await _persist();
   }
 
   Future<void> pruneExpired() async {
-    final todos = await _loadAll();
+    final todos = await _load();
+    final before = todos.length;
     todos.removeWhere((_, todo) => todo.isExpired);
-    await _saveAll(todos);
+    if (todos.length != before) await _persist();
   }
 }

@@ -92,10 +92,13 @@ Ship Tier 1 first as the baseline. Tier 2 is the goal.
 
 ### Layout
 
-- One main screen. Top bar: title with pending count, an Active | Archive switch, and an overflow menu (Refresh, Settings).
+- One main screen. Top bar: title with pending count, an Active | Archive switch, and Refresh / Settings actions.
 - Body: the list. The Active tab has a composer pinned to the bottom (text field plus add button).
-- On wide screens (desktop, tablet landscape) content is centered with a max width of about 720 px.
-- Material 3, following system light/dark.
+- **Compact (`< 600 px`):** AppBar with bottom Active | Archive tabs, full-bleed composer, Settings pushed as a second screen.
+- **Medium (`600–839 px`):** an in-content header carries the title, count, filter segments and Refresh / Settings; content is capped at 760 px and the composer is a floating card.
+- **Expanded (`>= 840 px`):** a persistent `NavigationRail` (Active, Archive, Settings) replaces the AppBar, with a pending-count badge; the content pane is capped at 760 px. At `>= 1200 px` the rail expands to show labels.
+- Settings is capped at 1000 px in the expanded pane and switches to two columns when its body is at least 900 px wide.
+- Material 3 with six curated color themes (Ocean, Sunset, Forest, Grape, Rose, Midnight), each with light and dark palettes, plus a System / Light / Dark selector. Both live in Settings under Appearance and are persisted.
 
 ### Row behavior: seeing the full text without a detail page
 
@@ -119,7 +122,7 @@ Each todo is one row, and the row itself is the detail view.
 
 - Loading skeleton, an empty state per tab, and an error banner with Retry.
 - Offline banner: shows the saved list; add, edit, delete and check are disabled in v1.
-- Refresh: pull-to-refresh, on app resume, a refresh button on desktop, and every 60 seconds while the window is visible.
+- Refresh: pull-to-refresh, on app resume, a refresh button on desktop, and a background poll while the window is visible. The poll only runs when a server is configured. Every refresh is silent (no loading state) — the list is updated in place, with a thin progress bar while it runs — and writes are optimistic with a rollback, so the list never blanks.
 
 ### Desktop and accessibility
 
@@ -138,9 +141,11 @@ Each todo is one row, and the row itself is the detail view.
 | Android native glue (boot receiver, foreground service, full-screen intent, HyperOS onboarding, AlarmManager fallback) | Done and verified on the Poco X7 Pro |
 | Linux nudge (autostart, logind D-Bus, tray, notification) | Done and verified on niri |
 | Settings screen (nudge, cooldown, quiet hours, lock-screen privacy, Android permissions) | Done |
-| Desktop shortcuts (Ctrl+N, Ctrl+R, Esc) | Done |
-| Refresh on resume / every 60s | Done |
-| Loading skeleton | Not yet (plain spinner) |
+| Appearance: six theme presets, System/Light/Dark selector, persisted | Done |
+| Desktop shortcuts (Ctrl+N, Ctrl+R, Esc, Ctrl+1/2, Ctrl+,) | Done |
+| Adaptive layout: compact / medium / expanded rail, floating composer, two-column Settings | Done |
+| Refresh on resume / every 5 min while visible with a server configured | Done |
+| Loading skeleton | Done |
 | Go backend (`server/`), Fiber v3, SQLite, goose, auth, rate limit, prune, tests, Dockerfile | Done and exercised end to end |
 | `openapi.yaml` | Written at `server/openapi.yaml` |
 | Flutter `RemoteTodoRepository` (dio) + cache + offline fallback | Done |
@@ -373,9 +378,9 @@ Details:
 ### Sync strategy (v1)
 
 - The server is the source of truth. `GET /todos` returns everything (the list is small), and the client replaces its cache with the result.
-- The client refreshes on launch, on resume, manually, and every 60 seconds while visible.
-- Writes are online-only. Concurrent edits from two devices are last-write-wins.
-- Later, if needed: an offline write queue, `?updatedSince=` delta sync, ETags, or SSE for live updates.
+- The client refreshes on launch, on resume, manually, and on a slow background poll (5 min) that only runs while the window is visible and a server is configured. Refreshes are silent: the list is updated in place rather than replaced by a spinner.
+- Writes are online-only and applied optimistically: the list updates immediately, the server call follows, and a failure rolls the row back and surfaces a message. Concurrent edits from two devices are last-write-wins.
+- Later, if needed: an offline write queue, `?updatedSince=` delta sync, ETags or SSE for live updates.
 - No pagination in v1 (expect well under 1,000 rows). Add `limit` and `cursor` if that changes.
 
 ### Data model and backend notes (Phase 2)

@@ -43,6 +43,18 @@ Future<void> main(List<String> args) async {
     if (!ok) failures++;
   }
 
+  // Confirm we are actually talking to a Nudge server before asserting on it.
+  try {
+    await repo.getTodos();
+  } on AppFailure catch (failure) {
+    stderr.writeln('Could not read from $origin: ${failure.message}');
+    stderr.writeln(
+      'Check the URL, the token, and that the server is running. '
+      'Pass the origin only — /api/v1 is appended for you.',
+    );
+    exit(2);
+  }
+
   // Start clean so repeat runs are deterministic.
   for (final stale in await repo.getTodos()) {
     await repo.deleteTodo(stale.id);

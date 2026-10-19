@@ -235,6 +235,7 @@ class LinuxNudgePlatform
     windowManager.hide();
   }
 
+  @override
   Future<void> dispose() async {
     for (final sub in _subscriptions) {
       await sub.cancel();
@@ -242,6 +243,7 @@ class LinuxNudgePlatform
     _subscriptions.clear();
     await _dbusClient?.close();
     trayManager.removeListener(this);
+    windowManager.removeListener(this);
     await _controller.close();
   }
 }

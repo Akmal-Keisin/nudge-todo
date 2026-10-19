@@ -22,5 +22,6 @@
 - Prefers the API contract to live with the code as a hand-written `openapi.yaml` that is the source of truth for clients. Confidence: 0.7
 - Prefers current/stable major versions for greenfield services over battle-tested legacy lines (e.g. Fiber v3 rather than v2). Confidence: 0.6
 - Prefers minimal-dependency, pure-Go tooling (no cgo — e.g. `modernc.org/sqlite` over a cgo driver) so builds stay simple and the Docker image is a static binary. Confidence: 0.6
+- Wants user-facing onboarding docs: an explicit request to replace the boilerplate Flutter-template README with a top-level README.md guiding installation and setup (requirements, quick start, backend setup, config reference, repo layout). Confidence: 0.7
 - Wants deployment/operations documentation as an explicit deliverable — step-by-step, self-contained runbooks (prerequisites, DNS, firewall, install, verification, day-2 ops like backups/upgrades/token rotation, troubleshooting, uninstall) rather than pointers to third-party docs. Confidence: 0.7
 - Wants a no-container deployment path available, not Docker-only: expects the service to be installable as a bare-metal systemd unit alongside the containerized option. Confidence: 0.6

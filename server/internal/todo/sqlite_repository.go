@@ -20,6 +20,27 @@ func NewSQLiteRepository(db *sql.DB) *SQLiteRepository {
 
 const selectColumns = `id, text, is_archived, archived_at, created_at, updated_at`
 
+// Queries are package constants so no SQL string is rebuilt per call.
+//
+// The listing uses positive predicates so SQLite can walk an index instead of
+// scanning and sorting the whole table: active uses (is_archived, created_at),
+// archived uses (is_archived, archived_at).
+const (
+	listActiveQuery = `SELECT ` + selectColumns + ` FROM todos
+		WHERE is_archived = 0 ORDER BY created_at DESC`
+
+	listArchivedQuery = `SELECT ` + selectColumns + ` FROM todos
+		WHERE is_archived = 1 AND archived_at IS NOT NULL AND archived_at > ?
+		ORDER BY archived_at DESC`
+
+	// Both kinds, still hiding expired rows. The list is small, so the
+	// scan-and-sort this costs is not worth a UNION of two indexed reads.
+	listAllQuery = `SELECT ` + selectColumns + ` FROM todos
+		WHERE is_archived = 0
+		   OR (is_archived = 1 AND archived_at IS NOT NULL AND archived_at > ?)
+		ORDER BY created_at DESC`
+)
+
 func (r *SQLiteRepository) List(
 	ctx context.Context,
 	status Status,
@@ -28,19 +49,21 @@ func (r *SQLiteRepository) List(
 ) ([]Todo, error) {
 	cut := now.Add(-retention).UnixMicro()
 
-	query := `SELECT ` + selectColumns + ` FROM todos
-		WHERE NOT (is_archived = 1 AND archived_at IS NOT NULL AND archived_at <= ?)`
-
+	var (
+		query string
+		args  []any
+	)
 	switch status {
 	case StatusActive:
-		query += ` AND is_archived = 0 ORDER BY created_at DESC`
+		// Active rows are never expired, so no retention cut is needed.
+		query = listActiveQuery
 	case StatusArchived:
-		query += ` AND is_archived = 1 ORDER BY archived_at DESC`
+		query, args = listArchivedQuery, []any{cut}
 	default:
-		query += ` ORDER BY created_at DESC`
+		query, args = listAllQuery, []any{cut}
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, cut)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list todos: %w", err)
 	}
@@ -60,28 +83,29 @@ func (r *SQLiteRepository) List(
 	return todos, nil
 }
 
+// Create inserts a todo in one statement. A repeat of an existing id inserts
+// nothing and returns the stored todo with created=false, so a retried create
+// is idempotent without a read up front.
 func (r *SQLiteRepository) Create(ctx context.Context, t Todo) (Todo, bool, error) {
-	existing, err := r.Get(ctx, t.ID)
-	switch {
-	case err == nil:
-		return existing, false, nil
-	case !errors.Is(err, ErrNotFound):
-		return Todo{}, false, err
-	}
-
-	_, err = r.db.ExecContext(ctx,
-		`INSERT INTO todos (`+selectColumns+`) VALUES (?, ?, ?, ?, ?, ?)`,
+	row := r.db.QueryRowContext(ctx,
+		`INSERT INTO todos (`+selectColumns+`) VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO NOTHING
+		 RETURNING `+selectColumns,
 		t.ID, t.Text, boolToInt(t.IsArchived), timePtrToMicro(t.ArchivedAt),
 		t.CreatedAt.UnixMicro(), t.UpdatedAt.UnixMicro(),
 	)
-	if err != nil {
-		// A concurrent insert of the same id wins; return what is stored.
-		if stored, getErr := r.Get(ctx, t.ID); getErr == nil {
-			return stored, false, nil
+	stored, err := scanTodo(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		existing, getErr := r.Get(ctx, t.ID)
+		if getErr != nil {
+			return Todo{}, false, fmt.Errorf("create todo: %w", getErr)
 		}
+		return existing, false, nil
+	}
+	if err != nil {
 		return Todo{}, false, fmt.Errorf("create todo: %w", err)
 	}
-	return t, true, nil
+	return stored, true, nil
 }
 
 func (r *SQLiteRepository) Get(ctx context.Context, id string) (Todo, error) {
@@ -97,6 +121,9 @@ func (r *SQLiteRepository) Get(ctx context.Context, id string) (Todo, error) {
 	return t, nil
 }
 
+// Update applies the change in a single statement, so there is no window
+// between reading the row and writing it. Nil fields are left untouched; a
+// missing id is reported as ErrNotFound via RETURNING no rows.
 func (r *SQLiteRepository) Update(
 	ctx context.Context,
 	id string,
@@ -104,36 +131,43 @@ func (r *SQLiteRepository) Update(
 	isArchived *bool,
 	now time.Time,
 ) (Todo, error) {
-	current, err := r.Get(ctx, id)
-	if err != nil {
-		return Todo{}, err
-	}
-
+	var (
+		textArg   any // nil leaves text alone
+		archArg   any // nil leaves is_archived and archived_at alone
+		archiveAt any // the timestamp to stamp when archiving, else nil
+	)
 	if text != nil {
-		current.Text = *text
+		textArg = *text
 	}
 	if isArchived != nil {
-		current.IsArchived = *isArchived
-		switch {
-		case *isArchived && current.ArchivedAt == nil:
-			at := now
-			current.ArchivedAt = &at
-		case !*isArchived:
-			current.ArchivedAt = nil
+		archArg = boolToInt(*isArchived)
+		if *isArchived {
+			archiveAt = now.UnixMicro()
 		}
 	}
-	current.UpdatedAt = now
 
-	_, err = r.db.ExecContext(ctx,
-		`UPDATE todos SET text = ?, is_archived = ?, archived_at = ?, updated_at = ?
-		 WHERE id = ?`,
-		current.Text, boolToInt(current.IsArchived), timePtrToMicro(current.ArchivedAt),
-		current.UpdatedAt.UnixMicro(), current.ID,
+	row := r.db.QueryRowContext(ctx,
+		`UPDATE todos SET
+			text = COALESCE(?, text),
+			is_archived = COALESCE(?, is_archived),
+			archived_at = CASE
+				WHEN ? IS NULL THEN archived_at
+				WHEN ? = 1 THEN COALESCE(archived_at, ?)
+				ELSE NULL
+			END,
+			updated_at = ?
+		 WHERE id = ?
+		 RETURNING `+selectColumns,
+		textArg, archArg, archArg, archArg, archiveAt, now.UnixMicro(), id,
 	)
+	updated, err := scanTodo(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Todo{}, ErrNotFound
+	}
 	if err != nil {
 		return Todo{}, fmt.Errorf("update todo: %w", err)
 	}
-	return current, nil
+	return updated, nil
 }
 
 func (r *SQLiteRepository) Delete(ctx context.Context, id string) error {

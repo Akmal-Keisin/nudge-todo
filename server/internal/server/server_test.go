@@ -42,7 +42,9 @@ func newTestAppWith(
 ) (*fiber.App, *todo.Service, *todo.SQLiteRepository) {
 	t.Helper()
 
-	db, err := database.Open(":memory:", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	db, err := database.Open(":memory:", logger)
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
@@ -56,7 +58,7 @@ func newTestAppWith(
 		RateLimitPerMinute:   opts.rateLimitPerMinute,
 		IPRateLimitPerMinute: opts.ipRateLimitPerMinute,
 	}
-	return server.New(cfg, service), service, repo
+	return server.New(cfg, service, logger), service, repo
 }
 
 // do sends a request with auth and returns the response.
@@ -112,6 +114,21 @@ func TestHealthNeedsNoAuth(t *testing.T) {
 	resp := do(t, app, http.MethodGet, "/health", "", false)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+}
+
+// A panic in a handler must surface as the contract's 500 envelope instead of
+// dropping the connection.
+func TestPanicBecomesInternalErrorEnvelope(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	app.Get("/panic", func(fiber.Ctx) error { panic("boom") })
+
+	resp := do(t, app, http.MethodGet, "/panic", "", false)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("want 500, got %d", resp.StatusCode)
+	}
+	if code := decodeErrorCode(t, resp); code != "INTERNAL_ERROR" {
+		t.Errorf("want INTERNAL_ERROR, got %s", code)
 	}
 }
 

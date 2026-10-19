@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -27,6 +28,10 @@ type Config struct {
 	BodyLimitBytes int
 	// PruneInterval is how often the retention job runs.
 	PruneInterval time.Duration
+	// TrustedProxies lists the addresses that may set X-Forwarded-For. Behind
+	// Caddy this must name the proxy, or every request looks like it came from
+	// the proxy and the per-IP rate limit collapses into one bucket.
+	TrustedProxies []string
 }
 
 const (
@@ -62,6 +67,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	pruneInterval, err := envDuration("PRUNE_INTERVAL", defaultPruneInterval)
+	if err != nil {
+		return Config{}, err
+	}
 
 	token := os.Getenv("API_TOKEN")
 	if token == "" {
@@ -81,7 +90,8 @@ func Load() (Config, error) {
 		RateLimitPerMinute:   rateLimit,
 		IPRateLimitPerMinute: ipRateLimit,
 		BodyLimitBytes:       bodyLimit,
-		PruneInterval:        defaultPruneInterval,
+		PruneInterval:        pruneInterval,
+		TrustedProxies:       envList("TRUSTED_PROXIES"),
 	}, nil
 }
 
@@ -97,6 +107,22 @@ func envString(key, fallback string) string {
 	return fallback
 }
 
+// envList reads a comma-separated environment variable into a slice, dropping
+// empty entries.
+func envList(key string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	var values []string
+	for _, part := range strings.Split(raw, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
+}
+
 func envInt(key string, fallback int) (int, error) {
 	raw := os.Getenv(key)
 	if raw == "" {
@@ -105,6 +131,22 @@ func envInt(key string, fallback int) (int, error) {
 	value, err := strconv.Atoi(raw)
 	if err != nil {
 		return 0, fmt.Errorf("%s must be an integer, got %q", key, raw)
+	}
+	return value, nil
+}
+
+// envDuration reads a Go duration string, e.g. "30m" or "1h".
+func envDuration(key string, fallback time.Duration) (time.Duration, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a duration like 1h, got %q", key, raw)
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("%s must be positive, got %q", key, raw)
 	}
 	return value, nil
 }
